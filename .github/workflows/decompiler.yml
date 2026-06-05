@@ -1,0 +1,88 @@
+# decompiler.yml
+name: Universal Decompiler Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      binary_url:
+        description: 'URL of the target binary (.jar, .dll, .exe, or Go binary)'
+        required: true
+        type: string
+
+jobs:
+  decompile:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Tools (Java, .NET, and Python)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0'
+          
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Python (For Native Decompilers)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Download Target Binary
+        run: |
+          FILENAME=$(basename "${{ github.event.inputs.binary_url }}")
+          wget "${{ github.event.inputs.binary_url }}" -O "$FILENAME"
+          echo "FILENAME=$FILENAME" >> $GITHUB_ENV
+
+      - name: Detect Language and Decompile
+        run: |
+          EXTENSION="${FILENAME##*.}"
+          echo "Detected extension: $EXTENSION"
+          mkdir -p decompiled_code
+
+          if [ "$EXTENSION" = "jar" ] || [ "$EXTENSION" = "class" ]; then
+            echo "Processing Java binary..."
+            wget https://github.com -O cfr.jar
+            java -jar cfr.jar "$FILENAME" --outputdir decompiled_code
+
+          elif [ "$EXTENSION" = "dll" ]; then
+            echo "Processing C#/.NET binary..."
+            dotnet tool install -g ilspy.cmdline
+            export PATH="$PATH:$HOME/.dotnet/tools"
+            ilspycmd "$FILENAME" -o decompiled_code
+
+          elif [ "$EXTENSION" = "exe" ]; then
+            # We must verify if the EXE is .NET or Native (MSVC)
+            # Inspecting file metadata using standard 'file' utility
+            if file "$FILENAME" | grep -q "mono\|.NET"; then
+              echo "Processing C#/.NET Executable..."
+              dotnet tool install -g ilspy.cmdline
+              export PATH="$PATH:$HOME/.dotnet/tools"
+              ilspycmd "$FILENAME" -o decompiled_code
+            else
+              echo "Processing Native MSVC Windows Executable..."
+              # Install Avast RetDec (or build/pull portable CLI)
+              # For speed inside a CI, we grab the official standalone Ubuntu release
+              wget https://github.com
+              tar -xf retdec-v5.0-ubuntu-64bit.tar.xz
+              
+              # Run RetDec tool to generate readable C pseudo-code from MSVC assembly
+              ./retdec/bin/retdec-decompiler "$FILENAME" --output decompiled_code/msvc_recovered.c
+            fi
+
+          else
+            echo "Processing Go / Native compiled binary..."
+            wget https://github.com -O jellyfish
+            chmod +x jellyfish
+            ./jellyfish decompile "$FILENAME" > decompiled_code/go_recovered.go || echo "Go recovery partial"
+          fi
+
+      - name: Upload Decompiled Source
+        uses: actions/upload-artifact@v4
+        with:
+          name: decompiled-source
+          path: decompiled_code/
