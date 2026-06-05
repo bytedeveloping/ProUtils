@@ -1,12 +1,24 @@
-name: Create Release
+name: Manual Create Release
 
 on:
-  push:
-    tags:
-      - 'v*' # Triggers workflow on version tags like v1.0.0
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g., v1.0.0)'
+        required: true
+        type: string
+      release_title:
+        description: 'Release Title (e.g., Version 1.0.0 Gold)'
+        required: true
+        type: string
+      release_notes:
+        description: 'Release Notes / Description'
+        required: false
+        type: string
+        default: 'Manual production release archive.'
 
 permissions:
-  contents: write # Required to upload assets to releases
+  contents: write
 
 jobs:
   build-release:
@@ -16,13 +28,14 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Archive repository
-        run: zip -r repository-archive.zip . -x "*.git*" # Compresses repo, excludes Git files
+        run: zip -r repository-archive.zip . -x "*.git*"
 
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
         with:
           files: repository-archive.zip
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
+          tag_name: ${{ inputs.tag_name }}
+          name: ${{ inputs.release_title }}
+          body: ${{ inputs.release_notes }}
           draft: false
           prerelease: false
