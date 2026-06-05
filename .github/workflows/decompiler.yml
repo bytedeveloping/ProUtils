@@ -16,26 +16,38 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Tools (Java, .NET, and Python)
+      - name: Setup .NET SDK
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0'
           
-      - name: Setup Java
+      - name: Setup Java Runtime
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Python (For Native Decompilers)
+      - name: Setup Python Environment
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Download Target Binary
         run: |
-          FILENAME=$(basename "${{ github.event.inputs.binary_url }}")
-          wget "${{ github.event.inputs.binary_url }}" -O "$FILENAME"
+          INPUT_URL="${{ github.event.inputs.binary_url }}"
+          
+          # Automatically convert GitHub web UI blob links to raw file downloads
+          if [[ "$INPUT_URL" == *"github.com"* && "$INPUT_URL" == *"/blob/"* ]]; then
+            echo "Detected GitHub web URL. Formatting to a raw file link..."
+            CLEAN_URL=$(echo "$INPUT_URL" | sed 's|github.com|://githubusercontent.com|' | sed 's|/blob/|/|')
+          else
+            CLEAN_URL="$INPUT_URL"
+          fi
+
+          FILENAME=$(basename "$CLEAN_URL")
+          echo "Downloading binary from: $CLEAN_URL"
+          
+          wget "$CLEAN_URL" -O "$FILENAME"
           echo "FILENAME=$FILENAME" >> $GITHUB_ENV
 
       - name: Detect Language and Decompile
@@ -56,8 +68,7 @@ jobs:
             ilspycmd "$FILENAME" -o decompiled_code
 
           elif [ "$EXTENSION" = "exe" ]; then
-            # We must verify if the EXE is .NET or Native (MSVC)
-            # Inspecting file metadata using standard 'file' utility
+            # Verify if the EXE is .NET MSIL bytecode or Native (MSVC) Assembly
             if file "$FILENAME" | grep -q "mono\|.NET"; then
               echo "Processing C#/.NET Executable..."
               dotnet tool install -g ilspy.cmdline
@@ -65,12 +76,13 @@ jobs:
               ilspycmd "$FILENAME" -o decompiled_code
             else
               echo "Processing Native MSVC Windows Executable..."
-              # Install Avast RetDec (or build/pull portable CLI)
-              # For speed inside a CI, we grab the official standalone Ubuntu release
+              # Grab official RetDec release build for Linux 
               wget https://github.com
-              tar -xf retdec-v5.0-ubuntu-64bit.tar.xz
               
-              # Run RetDec tool to generate readable C pseudo-code from MSVC assembly
+              # Extract archive package
+              tar -xf RetDec-v5.0-Linux-Release.tar.xz
+              
+              # Run pipeline into generated file tree
               ./retdec/bin/retdec-decompiler "$FILENAME" --output decompiled_code/msvc_recovered.c
             fi
 
